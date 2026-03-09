@@ -12,11 +12,13 @@ const EJS_PUBKEY   = "f4atCcjmZiZdCiS3H";
 
 async function sendEmail(templateId, params) {
   try {
-    await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+    const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ service_id: EJS_SERVICE, template_id: templateId, user_id: EJS_PUBKEY, template_params: params })
     });
+    const txt = await res.text();
+    console.log("EmailJS →", res.status, txt, params);
   } catch(e) { console.warn("Email non envoyé", e); }
 }
 
@@ -128,14 +130,14 @@ function MainApp({session,profile,setProfile,toast}){
     setTrips(p=>p.filter(t=>t.id!==trip.id));
     // Email aux passagers
     for(const b of tripBookings){
-      await sendEmail(EJS_TPL_ANNUL,{
-        passager_nom: b.profiles?.full_name||"Passager",
-        passager_email: b.profiles?.email||"",
-        date: fmtDate(trip.trip_date),
-        heure: fmtTime(trip.trip_time),
-        destination: trip.to_city,
-        to_email: b.profiles?.email||""
-      });
+      if(b.profiles?.email){
+        await sendEmail(EJS_TPL_ANNUL,{
+          passager_nom: b.profiles?.full_name||"Passager",
+          passager_email: b.profiles?.email,
+          message: `Le trajet du ${fmtDate(trip.trip_date)} à ${fmtTime(trip.trip_time)} vers ${trip.to_city} a été annulé par le conducteur.`,
+          to_email: b.profiles?.email
+        });
+      }
     }
     toast("Trajet supprimé.","warn");
     loadAll();
@@ -143,6 +145,22 @@ function MainApp({session,profile,setProfile,toast}){
 
   const handleBookingAction=async(bookingId,status)=>{
     await sb.from("bookings").update({status}).eq("id",bookingId);
+    // Email au passager si refus
+    if(status==="refused"){
+      const booking=myTripBookings.find(b=>b.id===bookingId);
+      if(booking){
+        const trip=trips.find(t=>t.id===booking.trip_id);
+        const{data:passengerProfile}=await sb.from("profiles").select("email,full_name").eq("id",booking.passenger_id).single();
+        if(passengerProfile?.email){
+          await sendEmail(EJS_TPL_ANNUL,{
+            passager_nom: passengerProfile.full_name||"Passager",
+            passager_email: passengerProfile.email,
+            message: `Votre demande de réservation du ${fmtDate(booking.trip_date)} à ${fmtTime(trip?.trip_time)} vers ${trip?.to_city} n'a pas été acceptée par le conducteur.`,
+            to_email: passengerProfile.email
+          });
+        }
+      }
+    }
     toast(status==="accepted"?"Réservation acceptée ✅":"Réservation refusée.");
     loadAll();
   };
