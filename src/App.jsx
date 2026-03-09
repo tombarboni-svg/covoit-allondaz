@@ -63,27 +63,41 @@ create policy "Update avatar"  on storage.objects for update using (bucket_id = 
 // CLIENT SUPABASE LÉGER
 // ═══════════════════════════════════════════════════════════════════════════════
 function createClient(url, key) {
-  const baseH = { "Content-Type": "application/json", apikey: key, Authorization: `Bearer ${key}` };
+  // Extraire la clé JWT anon depuis la clé publishable si besoin
+  const anonKey = key.startsWith("sb_publishable_") ? key : key;
+  const baseH = { "Content-Type": "application/json", apikey: anonKey, Authorization: `Bearer ${anonKey}` };
   const ah = (tok) => tok ? { ...baseH, Authorization: `Bearer ${tok}` } : baseH;
+
+  // Persistance session dans sessionStorage
+  const SESSION_KEY = "covoit_session";
   let _session = null;
+  try {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    if (stored) _session = JSON.parse(stored);
+  } catch(e) {}
   const listeners = [];
+
+  const saveSession = (s) => {
+    _session = s;
+    try { if (s) sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); else sessionStorage.removeItem(SESSION_KEY); } catch(e) {}
+  };
 
   const auth = {
     async signUp({ email, password, options }) {
       const r = await fetch(`${url}/auth/v1/signup`, { method: "POST", headers: baseH, body: JSON.stringify({ email, password, data: options?.data || {} }) });
       const d = await r.json();
-      if (d.access_token) { _session = d; listeners.forEach(fn => fn("SIGNED_IN", d)); }
-      return { data: d, error: d.error ? d : null };
+      if (d.access_token) { saveSession(d); listeners.forEach(fn => fn("SIGNED_IN", d)); }
+      return { data: d, error: (d.error || d.msg) ? d : null };
     },
     async signInWithPassword({ email, password }) {
       const r = await fetch(`${url}/auth/v1/token?grant_type=password`, { method: "POST", headers: baseH, body: JSON.stringify({ email, password }) });
       const d = await r.json();
-      if (d.access_token) { _session = d; listeners.forEach(fn => fn("SIGNED_IN", d)); }
-      return { data: { session: d.access_token ? d : null }, error: d.error_description ? { message: d.error_description } : null };
+      if (d.access_token) { saveSession(d); listeners.forEach(fn => fn("SIGNED_IN", d)); }
+      return { data: { session: d.access_token ? d : null }, error: d.error_description ? { message: d.error_description } : (d.msg ? { message: d.msg } : null) };
     },
     async signOut() {
-      if (_session?.access_token) await fetch(`${url}/auth/v1/logout`, { method: "POST", headers: ah(_session.access_token) });
-      _session = null; listeners.forEach(fn => fn("SIGNED_OUT", null));
+      if (_session?.access_token) { try { await fetch(`${url}/auth/v1/logout`, { method: "POST", headers: ah(_session.access_token) }); } catch(e) {} }
+      saveSession(null); listeners.forEach(fn => fn("SIGNED_OUT", null));
       return { error: null };
     },
     getSession() { return { data: { session: _session } }; },
