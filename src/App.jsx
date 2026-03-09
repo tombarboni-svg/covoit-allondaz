@@ -325,7 +325,7 @@ function AuthScreen({ view, setView, toast, onLogin, onProfileCreated }) {
     setLoading(true); setErr("");
     const {data,error} = await sb.auth.signInWithPassword({email,password});
     setLoading(false);
-    if (error) { setErr("Email ou mot de passe incorrect."); return; }
+    if (error || !data?.session) { setErr("Email ou mot de passe incorrect. Vérifiez vos identifiants."); return; }
     onLogin(data.session); toast("Bienvenue ! 👋");
   };
 
@@ -334,7 +334,18 @@ function AuthScreen({ view, setView, toast, onLogin, onProfileCreated }) {
     if (password.length < 6) { setErr("Le mot de passe doit faire au moins 6 caractères."); return; }
     setLoading(true); setErr("");
     const {data,error} = await sb.auth.signUp({email, password, options:{data:{full_name:fullName}}});
-    if (error || !data?.user?.id) { setLoading(false); setErr("Erreur d'inscription. Cet email est peut-être déjà utilisé."); return; }
+    if (error) { setLoading(false); setErr("Erreur d'inscription. Cet email est peut-être déjà utilisé."); return; }
+    // Si pas de session directe, tenter une connexion immédiate
+    if (!data?.user?.id) { setLoading(false); setErr("Erreur d'inscription. Réessayez."); return; }
+    if (!data?.access_token) {
+      // Tenter connexion directe
+      const login = await sb.auth.signInWithPassword({email, password});
+      if (login.data?.session) {
+        const uid = login.data.session.user?.id;
+        if (uid) { await sb.from("profiles").upsert([{id:uid, full_name:fullName, phone, avatar_url:null}]); onProfileCreated({id:uid, full_name:fullName, phone, avatar_url:null}); }
+        setLoading(false); toast("Compte créé ! Bienvenue 🌿"); onLogin(login.data.session); return;
+      }
+    }
 
     // Upload avatar
     let avatar_url = null;
