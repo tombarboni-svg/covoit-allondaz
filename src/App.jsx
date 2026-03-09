@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 //   Clés disponibles dans : Settings > API
 // ═══════════════════════════════════════════════════════════════════════════════
 const SUPABASE_URL      = "https://ypmfwkibmbcpquxxpglp.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_lACgcVY9ec84XtOOQfpBqw_SuUi-qzn";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwbWZ3a2libWJjcHF1eHhwZ2xwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDYzNzksImV4cCI6MjA4ODYyMjM3OX0._scbSGuaXlr2WWIAcGRGhmTSkD5ym1O-0lTB8xe3vko";
 
 // ► Pour les emails de notification, créez un compte gratuit sur https://emailjs.com
 //   Puis renseignez vos identifiants EmailJS ci-dessous
