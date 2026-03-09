@@ -145,13 +145,19 @@ function MainApp({session,profile,setProfile,toast}){
 
   const handleBookingAction=async(bookingId,status)=>{
     await sb.from("bookings").update({status}).eq("id",bookingId);
-    // Email au passager si refus
-    if(status==="refused"){
-      const booking=myTripBookings.find(b=>b.id===bookingId);
-      if(booking){
-        const trip=trips.find(t=>t.id===booking.trip_id);
-        const{data:passengerProfile}=await sb.from("profiles").select("email,full_name").eq("id",booking.passenger_id).single();
-        if(passengerProfile?.email){
+    const booking=myTripBookings.find(b=>b.id===bookingId);
+    if(booking){
+      const trip=trips.find(t=>t.id===booking.trip_id);
+      const{data:passengerProfile}=await sb.from("profiles").select("email,full_name").eq("id",booking.passenger_id).single();
+      if(passengerProfile?.email){
+        if(status==="accepted"){
+          await sendEmail(EJS_TPL_ANNUL,{
+            passager_nom: passengerProfile.full_name||"Passager",
+            passager_email: passengerProfile.email,
+            message: `Bonne nouvelle ! Votre réservation du ${fmtDate(booking.trip_date)} à ${fmtTime(trip?.trip_time)} vers ${trip?.to_city} a été confirmée par le conducteur. Contactez-le au ${profile?.phone||"(téléphone non renseigné)"}.`,
+            to_email: passengerProfile.email
+          });
+        } else if(status==="refused"){
           await sendEmail(EJS_TPL_ANNUL,{
             passager_nom: passengerProfile.full_name||"Passager",
             passager_email: passengerProfile.email,
