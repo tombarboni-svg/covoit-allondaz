@@ -79,6 +79,8 @@ function MainApp({session,profile,setProfile,toast}){
   const[loading,setLoading]=useState(true);
   const[bookings,setBookings]=useState([]);
   const[myTripBookings,setMyTripBookings]=useState([]);
+  const[requests,setRequests]=useState([]);
+  const[requestsProfiles,setRequestsProfiles]=useState({});
 
   const loadAll=useCallback(async()=>{
     setLoading(true);
@@ -92,6 +94,12 @@ function MainApp({session,profile,setProfile,toast}){
     const myIds=list.filter(t=>t.user_id===session.user.id).map(t=>t.id);
     if(myIds.length>0){const{data:mbData}=await sb.from("bookings").select("*, profiles(full_name,phone,avatar_url,id,email)").in("trip_id",myIds);setMyTripBookings(mbData||[]);}
     else setMyTripBookings([]);
+    // Charger les demandes de trajet
+    const{data:rqData}=await sb.from("ride_requests").select("*").gte("request_date",TODAY).eq("status","open").order("request_date",{ascending:true});
+    const rqList=rqData||[];setRequests(rqList);
+    const ruids=[...new Set(rqList.map(r=>r.user_id))];const rmap={};
+    for(const uid of ruids){const{data:pd}=await sb.from("profiles").select("*").eq("id",uid).single();if(pd)rmap[uid]=pd;}
+    setRequestsProfiles(rmap);
     setLoading(false);
   },[session.user.id]);
 
@@ -171,6 +179,29 @@ function MainApp({session,profile,setProfile,toast}){
     loadAll();
   };
 
+  const handleAcceptRequest=async(req)=>{
+    const{error}=await sb.from("ride_requests").update({status:"accepted",accepted_by:session.user.id}).eq("id",req.id);
+    if(error){toast("Erreur.","err");return;}
+    // Email au demandeur
+    const requester=requestsProfiles[req.user_id];
+    if(requester?.email){
+      await sendEmail(EJS_TPL_ANNUL,{
+        passager_nom: requester.full_name||"Voisin",
+        passager_email: requester.email,
+        message: `Bonne nouvelle ! Votre demande de trajet du ${fmtDate(req.request_date)} à ${fmtTime(req.request_time)} vers ${req.to_city} a été acceptée par ${profile?.full_name||"un conducteur"}. Contactez-le au ${profile?.phone||"(téléphone non renseigné)"}.`,
+        to_email: requester.email
+      });
+    }
+    toast("Demande acceptée ! Le voisin a été prévenu 🚗");
+    loadAll();
+  };
+
+  const handleDeleteRequest=async(id)=>{
+    await sb.from("ride_requests").delete().eq("id",id);
+    setRequests(p=>p.filter(r=>r.id!==id));
+    toast("Demande supprimée.","warn");
+  };
+
   const myTrips=trips.filter(t=>t.user_id===session.user.id);
   const pendingCount=myTripBookings.filter(b=>b.status==="pending").length;
 
@@ -183,13 +214,14 @@ function MainApp({session,profile,setProfile,toast}){
             <div style={{display:"flex",alignItems:"center",gap:10}}><Avatar profile={profile} size={36}/><button onClick={()=>sb.auth.signOut()} style={{background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.3)",borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:12,fontWeight:700}}>Déconnexion</button></div>
           </div>
           <div style={{display:"flex",gap:1,background:"rgba(0,0,0,.15)",borderRadius:"10px 10px 0 0",overflow:"hidden"}}>
-            {[["calendar","📅 Calendrier"],["publish","➕ Proposer"],["mine","📋 Mes trajets"+(pendingCount>0?` (${pendingCount})`:"")],["mybookings","🎫 Mes résa"],["account","👤 Profil"]].map(([key,label])=>(
+            {[["calendar","📅 Calendrier"],["requests","🙋 Demandes"],["publish","➕ Proposer"],["mine","📋 Mes trajets"+(pendingCount>0?` (${pendingCount})`:"")],["mybookings","🎫 Mes résa"],["account","👤 Profil"]].map(([key,label])=>(
               <button key={key} onClick={()=>setTab(key)} style={{flex:1,background:tab===key?"rgba(255,255,255,.18)":"transparent",border:"none",color:tab===key?"#fff":"rgba(255,255,255,.55)",fontWeight:tab===key?800:600,fontSize:11,padding:"10px 2px",borderBottom:tab===key?"3px solid #A8D070":"3px solid transparent",transition:"all .2s"}}>{label}</button>
             ))}
           </div>
         </div>
       </header>
       <main style={{maxWidth:760,margin:"0 auto",padding:"20px 16px 60px"}}>
+        {tab==="requests"&&<RequestsTab session={session} profile={profile} requests={requests} requestsProfiles={requestsProfiles} onAccept={handleAcceptRequest} onDelete={handleDeleteRequest} toast={toast} onReload={loadAll}/>}
         {tab==="calendar"&&<CalendarTab flatTrips={flatTrips} trips={trips} profilesMap={profilesMap} session={session} bookings={bookings} myTripBookings={myTripBookings} onBook={handleBook} loading={loading}/>}
         {tab==="publish"&&<PublishForm session={session} toast={toast} onPublished={t=>{setTrips(p=>[t,...p]);setTab("mine");}}/>}
         {tab==="mine"&&<MineTab myTrips={myTrips} myTripBookings={myTripBookings} profile={profile} onDelete={handleDelete} onBookingAction={handleBookingAction} onPublish={()=>setTab("publish")}/>}
@@ -445,6 +477,131 @@ function AccountTab({session,profile,setProfile,toast}){
       <Sec title="Mes informations"><Fld label="Prénom et nom *"><input value={name} onChange={e=>setName(e.target.value)} style={IS()}/></Fld><Fld label="Téléphone"><input value={phone} onChange={e=>setPhone(e.target.value)} style={IS()}/></Fld></Sec>
       <button onClick={handleSave} disabled={saving} style={{width:"100%",background:saving?"#9AB89A":"linear-gradient(135deg,#2E5339,#4A7C59)",color:"#fff",border:"none",borderRadius:13,padding:"13px",fontWeight:900,fontSize:15}}>{saving?"⏳ Sauvegarde…":"Enregistrer"}</button>
     </div></div>
+  );
+}
+
+function RequestsTab({session,profile,requests,requestsProfiles,onAccept,onDelete,toast,onReload}){
+  const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({fromPlace:KNOWN_PLACES[0],fromPlaceMode:"known",fromAddress:"",toCityMode:"fixed",toCity:DESTINATIONS[0],toCustomCity:"",toAddress:"",date:"",time:"",note:""});
+  const[loading,setLoading]=useState(false);
+  const[errs,setErrs]=useState({});
+  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+  const finalCity=form.toCityMode==="fixed"?form.toCity:form.toCustomCity;
+
+  const handleSubmit=async()=>{
+    const e={};
+    if(!form.date)e.date="Requis";
+    if(!form.time)e.time="Requis";
+    if(!form.toAddress.trim())e.toAddress="Requis";
+    if(form.toCityMode==="custom"&&!form.toCustomCity.trim())e.toCustomCity="Requis";
+    setErrs(e);if(Object.keys(e).length>0)return;
+    setLoading(true);
+    const row={user_id:session.user.id,from_place:form.fromPlaceMode==="known"?form.fromPlace:form.fromAddress,to_city:finalCity,to_address:form.toAddress,request_date:form.date,request_time:form.time,note:form.note,status:"open"};
+    const{error}=await sb.from("ride_requests").insert([row]);
+    setLoading(false);
+    if(error){toast("Erreur lors de la publication.","err");return;}
+    toast("Demande publiée ! 🙏");
+    setShowForm(false);
+    setForm({fromPlace:KNOWN_PLACES[0],fromPlaceMode:"known",fromAddress:"",toCityMode:"fixed",toCity:DESTINATIONS[0],toCustomCity:"",toAddress:"",date:"",time:"",note:""});
+    onReload();
+  };
+
+  const myRequests=requests.filter(r=>r.user_id===session.user.id);
+  const otherRequests=requests.filter(r=>r.user_id!==session.user.id);
+
+  return(
+    <div className="fade">
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,color:"#2E5339"}}>Demandes de trajet</div>
+        <button onClick={()=>setShowForm(!showForm)} style={{background:showForm?"#F2F5EE":"#2E5339",color:showForm?"#2E5339":"#fff",border:showForm?"1.5px solid #DDE4D0":"none",borderRadius:10,padding:"8px 16px",fontWeight:800,fontSize:13}}>
+          {showForm?"✕ Annuler":"🙋 Faire une demande"}
+        </button>
+      </div>
+
+      {showForm&&(
+        <div style={{background:"#fff",borderRadius:16,padding:20,border:"1px solid #E2E8D8",boxShadow:"0 2px 16px rgba(0,0,0,.07)",marginBottom:20}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:"#2E5339",marginBottom:16}}>Ma demande de trajet</div>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <Sec title="Point de départ">
+              <div style={{display:"flex",gap:8,marginBottom:8}}>{[["known","📍 Lieu connu"],["custom","✏️ Adresse libre"]].map(([v,l])=><button key={v} onClick={()=>f("fromPlaceMode",v)} style={{flex:1,padding:"8px",borderRadius:9,fontWeight:700,fontSize:12,background:form.fromPlaceMode===v?"#2E5339":"#F2F5EE",color:form.fromPlaceMode===v?"#fff":"#666",border:`1.5px solid ${form.fromPlaceMode===v?"#2E5339":"#DDE4D0"}`}}>{l}</button>)}</div>
+              {form.fromPlaceMode==="known"?<select value={form.fromPlace} onChange={e=>f("fromPlace",e.target.value)} style={IS()}>{KNOWN_PLACES.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={form.fromAddress} onChange={e=>f("fromAddress",e.target.value)} placeholder="Adresse à Allondaz" style={IS()}/>}
+            </Sec>
+            <Sec title="Destination">
+              <div style={{display:"flex",gap:8,marginBottom:8}}>{[["fixed","🏙️ Ville connue"],["custom","✏️ Autre ville"]].map(([v,l])=><button key={v} onClick={()=>f("toCityMode",v)} style={{flex:1,padding:"8px",borderRadius:9,fontWeight:700,fontSize:12,background:form.toCityMode===v?"#2E5339":"#F2F5EE",color:form.toCityMode===v?"#fff":"#666",border:`1.5px solid ${form.toCityMode===v?"#2E5339":"#DDE4D0"}`}}>{l}</button>)}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {form.toCityMode==="fixed"?<Fld label="Ville"><select value={form.toCity} onChange={e=>f("toCity",e.target.value)} style={IS()}>{DESTINATIONS.map(c=><option key={c} value={c}>{c}</option>)}</select></Fld>:<Fld label="Ville" err={errs.toCustomCity}><input value={form.toCustomCity} onChange={e=>f("toCustomCity",e.target.value)} placeholder="Moûtiers…" style={IS(errs.toCustomCity)}/></Fld>}
+                <Fld label="Adresse *" err={errs.toAddress}><input value={form.toAddress} onChange={e=>f("toAddress",e.target.value)} placeholder="Gare, hôpital…" style={IS(errs.toAddress)}/></Fld>
+              </div>
+            </Sec>
+            <Sec title="Quand ?">
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Fld label="Date *" err={errs.date}><input type="date" min={TODAY} value={form.date} onChange={e=>f("date",e.target.value)} style={IS(errs.date)}/></Fld>
+                <Fld label="Heure *" err={errs.time}><input type="time" value={form.time} onChange={e=>f("time",e.target.value)} style={IS(errs.time)}/></Fld>
+              </div>
+            </Sec>
+            <Fld label="Message (optionnel)"><textarea value={form.note} onChange={e=>f("note",e.target.value)} placeholder="Précisions utiles…" rows={2} style={IS()}/></Fld>
+          </div>
+          <button onClick={handleSubmit} disabled={loading} style={{width:"100%",marginTop:16,background:loading?"#9AB89A":"linear-gradient(135deg,#2E5339,#4A7C59)",color:"#fff",border:"none",borderRadius:12,padding:"13px",fontWeight:900,fontSize:15}}>
+            {loading?"⏳ Publication…":"Publier ma demande 🙏"}
+          </button>
+        </div>
+      )}
+
+      {/* Mes demandes */}
+      {myRequests.length>0&&(
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:900,color:"#4A7C59",textTransform:"uppercase",letterSpacing:1.3,marginBottom:10}}>Mes demandes</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {myRequests.map(r=>(
+              <div key={r.id} style={{background:"#fff",borderRadius:12,padding:16,border:"1px solid #E2E8D8",boxShadow:"0 2px 8px rgba(0,0,0,.05)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontWeight:800,fontSize:14,color:"#2E5339"}}>{r.to_city} — {r.to_address}</div>
+                    <div style={{fontSize:12,color:"#666",marginTop:2}}>📅 {fmtDate(r.request_date)} à {fmtTime(r.request_time)}</div>
+                    <div style={{fontSize:12,color:"#888",marginTop:1}}>📍 {r.from_place}</div>
+                  </div>
+                  <span style={{background:"#EAF4E0",color:"#2E5339",borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:800}}>🟢 Ouverte</span>
+                </div>
+                {r.note&&<div style={{background:"#F8FAF5",borderRadius:8,padding:"7px 10px",fontSize:12,color:"#666",marginBottom:8}}>💬 {r.note}</div>}
+                <button onClick={()=>onDelete(r.id)} style={{width:"100%",background:"none",border:"1.5px solid #FECACA",color:"#DC2626",borderRadius:9,padding:"8px",fontWeight:800,fontSize:12}}>Supprimer ma demande</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Demandes des autres */}
+      <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:"#2E5339",marginBottom:12}}>
+        Demandes de voisins
+        <span style={{fontSize:12,fontWeight:600,color:"#888",marginLeft:8}}>{otherRequests.length} demande{otherRequests.length!==1?"s":""}</span>
+      </div>
+      {otherRequests.length===0?<Empty label="Aucune demande en attente" sub="Les voisins sans voiture pourront faire appel à vous ici"/>:
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {otherRequests.map(r=>{
+            const requester=requestsProfiles[r.user_id];
+            return(
+              <div key={r.id} className="lift" style={{background:"#fff",borderRadius:14,padding:18,border:"1px solid #E2E8D8",boxShadow:"0 2px 12px rgba(0,0,0,.06)"}}>
+                <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                  <Avatar profile={requester} size={46} style={{flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                      <div style={{fontWeight:800,fontSize:15}}>{requester?.full_name||"…"}</div>
+                      <div style={{display:"flex",gap:6}}><Chip accent="date">📅 {fmtDate(r.request_date)}</Chip><Chip accent="time">🕐 {fmtTime(r.request_time)}</Chip></div>
+                    </div>
+                    <div style={{marginBottom:8}}>
+                      <div style={{display:"flex",gap:7,marginBottom:5}}><span>📍</span><span style={{fontSize:13,fontWeight:600}}>{r.from_place}</span></div>
+                      <div style={{display:"flex",gap:7}}><span>🏁</span><span style={{fontSize:13}}><strong style={{color:"#2E5339"}}>{r.to_city}</strong> — {r.to_address}</span></div>
+                    </div>
+                    {r.note&&<div style={{background:"#F8FAF5",borderRadius:8,padding:"8px 10px",fontSize:12,color:"#666",marginBottom:8}}>💬 {r.note}</div>}
+                    <button onClick={()=>onAccept(r)} style={{width:"100%",background:"linear-gradient(135deg,#2E5339,#4A7C59)",color:"#fff",border:"none",borderRadius:10,padding:"10px",fontWeight:800,fontSize:14}}>🚗 Je peux conduire !</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      }
+    </div>
   );
 }
 
