@@ -90,7 +90,7 @@ function MainApp({session,profile,setProfile,toast}){
     const{data:bData}=await sb.from("bookings").select("*").eq("passenger_id",session.user.id);
     setBookings(bData||[]);
     const myIds=list.filter(t=>t.user_id===session.user.id).map(t=>t.id);
-    if(myIds.length>0){const{data:mbData}=await sb.from("bookings").select("*, profiles(full_name,phone,avatar_url,id)").in("trip_id",myIds);setMyTripBookings(mbData||[]);}
+    if(myIds.length>0){const{data:mbData}=await sb.from("bookings").select("*, profiles(full_name,phone,avatar_url,id,email)").in("trip_id",myIds);setMyTripBookings(mbData||[]);}
     else setMyTripBookings([]);
     setLoading(false);
   },[session.user.id]);
