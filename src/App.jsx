@@ -211,8 +211,8 @@ function MainApp({session,profile,setProfile,toast}){
   };
 
   const handleDeleteRequest=async(id)=>{
-    // Récupérer la demande avant suppression pour notifier le conducteur si acceptée
-    const req=requests.find(r=>r.id===id);
+    // Récupérer la demande DEPUIS SUPABASE avant suppression (peut être status=accepted)
+    const{data:req}=await sb.from("ride_requests").select("*").eq("id",id).single();
     await sb.from("ride_requests").delete().eq("id",id);
     setRequests(p=>p.filter(r=>r.id!==id));
     // Si la demande avait été acceptée, prévenir le conducteur
@@ -231,6 +231,11 @@ function MainApp({session,profile,setProfile,toast}){
   };
 
   const myTrips=trips.filter(t=>t.user_id===session.user.id);
+  // Points rouges — nouveaux éléments depuis dernière visite
+  const[lastVisitCalendar,setLastVisitCalendar]=useState(()=>localStorage.getItem("lastVisitCalendar")||TODAY);
+  const[lastVisitRequests,setLastVisitRequests]=useState(()=>localStorage.getItem("lastVisitRequests")||new Date().toISOString());
+  const newTrips=flatTrips.filter(t=>t.user_id!==session.user.id&&(t.occDate||t.trip_date)>=lastVisitCalendar).length;
+  const newRequests=requests.filter(r=>r.user_id!==session.user.id&&r.status==="open"&&r.created_at>lastVisitRequests).length;
   const pendingCount=myTripBookings.filter(b=>b.status==="pending").length;
 
   return(
@@ -242,8 +247,11 @@ function MainApp({session,profile,setProfile,toast}){
             <div style={{display:"flex",alignItems:"center",gap:10}}><Avatar profile={profile} size={36}/><button onClick={()=>sb.auth.signOut()} style={{background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.3)",borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:12,fontWeight:700}}>Déconnexion</button></div>
           </div>
           <div style={{display:"flex",gap:1,background:"rgba(0,0,0,.15)",borderRadius:"10px 10px 0 0",overflow:"hidden"}}>
-            {[["calendar","📅 Calendrier"],["requests","🙋 Demandes"],["publish","➕ Proposer"],["mine","📋 Mes trajets"+(pendingCount>0?` (${pendingCount})`:"")],["mybookings","🎫 Mes résa"],["account","👤 Profil"]].map(([key,label])=>(
-              <button key={key} onClick={()=>setTab(key)} style={{flex:1,background:tab===key?"rgba(255,255,255,.18)":"transparent",border:"none",color:tab===key?"#fff":"rgba(255,255,255,.55)",fontWeight:tab===key?800:600,fontSize:11,padding:"10px 2px",borderBottom:tab===key?"3px solid #A8D070":"3px solid transparent",transition:"all .2s"}}>{label}</button>
+            {[["calendar","📅 Calendrier",newTrips],["requests","🙋 Demandes",newRequests],["publish","➕ Proposer",0],["mine","📋 Mes trajets"+(pendingCount>0?` (${pendingCount})`:""),0],["mybookings","🎫 Mes résa",0],["account","👤 Profil",0]].map(([key,label,badge])=>(
+              <button key={key} onClick={()=>{setTab(key);if(key==="calendar"){setLastVisitCalendar(TODAY);localStorage.setItem("lastVisitCalendar",TODAY);}if(key==="requests"){const now=new Date().toISOString();setLastVisitRequests(now);localStorage.setItem("lastVisitRequests",now);}}} style={{flex:1,position:"relative",background:tab===key?"rgba(255,255,255,.18)":"transparent",border:"none",color:tab===key?"#fff":"rgba(255,255,255,.55)",fontWeight:tab===key?800:600,fontSize:11,padding:"10px 2px",borderBottom:tab===key?"3px solid #A8D070":"3px solid transparent",transition:"all .2s"}}>
+                {label}
+                {badge>0&&tab!==key&&<span style={{position:"absolute",top:4,right:4,width:8,height:8,borderRadius:"50%",background:"#FF4444"}}/>}
+              </button>
             ))}
           </div>
         </div>
