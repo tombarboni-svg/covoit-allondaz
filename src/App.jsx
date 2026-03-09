@@ -24,7 +24,11 @@ const VILLAGE="Allondaz",DESTINATIONS=["Annecy","Albertville","Ugine","Chambéry
 function fmtDate(d){if(!d)return"";const dt=new Date(d+"T00:00:00");return`${dt.getDate()} ${MONTHS_FR[dt.getMonth()]} ${dt.getFullYear()}`;}
 function fmtTime(t){return t?t.slice(0,5):"";}
 function initials(n){return(n||"?").split(" ").filter(Boolean).map(w=>w[0]).join("").toUpperCase().slice(0,2);}
-function getOccurrences(trip){const type=trip.recurrence_type;if(!type||type==="none")return[trip.trip_date];const out=[],max=new Date();max.setDate(max.getDate()+60);let cur=new Date(trip.trip_date+"T00:00:00");while(cur<=max&&out.length<30){const iso=cur.toISOString().split("T")[0];if(iso>=TODAY)out.push(iso);if(type==="daily")cur.setDate(cur.getDate()+1);else if(type==="weekly_days"){do{cur.setDate(cur.getDate()+1);}while(!trip.recurrence_days?.includes(cur.getDay())&&cur<=max);}else if(type==="weekly")cur.setDate(cur.getDate()+7);else if(type==="monthly")cur.setMonth(cur.getMonth()+1);else break;}return out;}
+function getOccurrences(trip){const type=trip.recurrence_type;if(!type||type==="none")return[trip.trip_date];const out=[],max=new Date();max.setDate(max.getDate()+365);// Commencer depuis aujourd'hui (ou trip_date si dans le futur)
+let cur=new Date(Math.max(new Date(trip.trip_date+"T00:00:00"),new Date(TODAY+"T00:00:00")));// Reculer au bon jour de départ pour weekly/weekly_days
+if(type==="weekly"){const tripStart=new Date(trip.trip_date+"T00:00:00");while(cur<tripStart)cur.setDate(cur.getDate()+7);}
+if(type==="weekly_days"&&trip.recurrence_days?.length>0){while(!trip.recurrence_days.includes(cur.getDay())&&cur<=max)cur.setDate(cur.getDate()+1);}
+while(cur<=max&&out.length<365){const iso=cur.toISOString().split("T")[0];out.push(iso);if(type==="daily")cur.setDate(cur.getDate()+1);else if(type==="weekly_days"){do{cur.setDate(cur.getDate()+1);}while(!trip.recurrence_days?.includes(cur.getDay())&&cur<=max);}else if(type==="weekly")cur.setDate(cur.getDate()+7);else if(type==="monthly")cur.setMonth(cur.getMonth()+1);else break;}return out;}
 
 const CSS=`@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Playfair+Display:wght@600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0;}body{background:#F2F5EE;}button{cursor:pointer;font-family:inherit;}input,select,textarea{font-family:inherit;outline:none;}textarea{resize:vertical;}.lift{transition:transform .2s,box-shadow .2s;}.lift:hover{transform:translateY(-2px);box-shadow:0 10px 32px rgba(0,0,0,.13)!important;}.fade{animation:fadeUp .3s ease both;}@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}@keyframes toastIn{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}@keyframes spin{to{transform:rotate(360deg)}}input:focus,select:focus,textarea:focus{border-color:#4A7C59!important;box-shadow:0 0 0 3px rgba(74,124,89,.2)!important;}.cal-day:hover{background:#EAF4E0!important;}`;
 
@@ -47,7 +51,7 @@ function AuthScreen({view,setView,toast,onProfileCreated}){
   const[email,setEmail]=useState("");const[password,setPassword]=useState("");const[fullName,setFullName]=useState("");const[phone,setPhone]=useState("");const[avatarFile,setAvatarFile]=useState(null);const[avatarPreview,setAvatarPreview]=useState(null);const[loading,setLoading]=useState(false);const[err,setErr]=useState("");const fileRef=useRef();
   const pickAvatar=e=>{const f=e.target.files?.[0];if(!f)return;setAvatarFile(f);const r=new FileReader();r.onload=ev=>setAvatarPreview(ev.target.result);r.readAsDataURL(f);};
   const handleLogin=async()=>{if(!email||!password){setErr("Remplissez tous les champs.");return;}setLoading(true);setErr("");const{error}=await sb.auth.signInWithPassword({email,password});setLoading(false);if(error){setErr("Email ou mot de passe incorrect.");return;}toast("Bienvenue ! 👋");};
-  const handleRegister=async()=>{if(!email||!password||!fullName){setErr("Prénom/nom, email et mot de passe sont requis.");return;}if(password.length<6){setErr("Mot de passe : 6 caractères minimum.");return;}setLoading(true);setErr("");const{data,error}=await sb.auth.signUp({email,password,options:{data:{full_name:fullName},emailRedirectTo:"https://covoit-allondaz.vercel.app"}});if(error){setLoading(false);setErr("Erreur : "+error.message);return;}const uid=data?.user?.id;if(!uid){setLoading(false);setErr("Erreur d'inscription. Réessayez.");return;}let avatar_url=null;if(avatarFile){const path=`${uid}/avatar`;await sb.storage.from("avatars").upload(path,avatarFile,{upsert:true});const{data:{publicUrl}}=sb.storage.from("avatars").getPublicUrl(path);avatar_url=publicUrl;}await sb.from("profiles").upsert([{id:uid,full_name:fullName,phone,avatar_url}]);onProfileCreated({id:uid,full_name:fullName,phone,avatar_url});setLoading(false);toast("Compte créé ! Vérifiez votre email 📧");setView("login");};
+  const handleRegister=async()=>{if(!email||!password||!fullName){setErr("Prénom/nom, email et mot de passe sont requis.");return;}if(password.length<6){setErr("Mot de passe : 6 caractères minimum.");return;}setLoading(true);setErr("");const{data,error}=await sb.auth.signUp({email,password,options:{data:{full_name:fullName},emailRedirectTo:"https://covoit-allondaz.vercel.app"}});if(error){setLoading(false);setErr("Erreur : "+error.message);return;}const uid=data?.user?.id;if(!uid){setLoading(false);setErr("Erreur d'inscription. Réessayez.");return;}let avatar_url=null;if(avatarFile){const path=`${uid}/avatar`;await sb.storage.from("avatars").upload(path,avatarFile,{upsert:true});const{data:{publicUrl}}=sb.storage.from("avatars").getPublicUrl(path);avatar_url=publicUrl;}await sb.from("profiles").upsert([{id:uid,full_name:fullName,phone,avatar_url,email}]);onProfileCreated({id:uid,full_name:fullName,phone,avatar_url,email});setLoading(false);toast("Compte créé ! Vérifiez votre email 📧");setView("login");};
   return(
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,background:"linear-gradient(160deg,#F2F5EE 0%,#E0EBD5 100%)"}}>
       <div style={{textAlign:"center",marginBottom:28}}><div style={{fontSize:54,marginBottom:8}}>🏔️</div><div style={{fontFamily:"'Playfair Display',serif",fontSize:30,fontWeight:700,color:"#2E5339"}}>Covoit' {VILLAGE}</div><div style={{fontSize:13,color:"#6A8A60",marginTop:6,fontWeight:700}}>Annecy · Albertville · Ugine · Chambéry</div><div style={{marginTop:8,fontSize:13,color:"#9AAA8A",fontWeight:600}}>Trajets gratuits entre voisins 🌻</div></div>
@@ -100,18 +104,18 @@ function MainApp({session,profile,setProfile,toast}){
     if(error){toast("Erreur lors de la réservation.","err");return;}
     // Email au conducteur
     const driver=profilesMap[trip.user_id];
-    const driverEmail=(await sb.from("profiles").select("id").eq("id",trip.user_id).single()).data;
-    const{data:{user}}=await sb.auth.getUser();
-    // On récupère l'email du conducteur via auth (on envoie avec les infos qu'on a)
+    // Récupérer l'email depuis profiles (colonne email)
+    const{data:driverProfile}=await sb.from("profiles").select("email").eq("id",trip.user_id).single();
+    const driverEmail=driverProfile?.email||"";
     await sendEmail(EJS_TPL_RESA,{
       conducteur_nom: driver?.full_name||"Conducteur",
-      conducteur_email: driver?.email||"",
+      conducteur_email: driverEmail,
       passager_nom: profile?.full_name||"Un voisin",
       date: fmtDate(occDate),
       heure: fmtTime(trip.trip_time),
       depart: trip.from_place,
       destination: trip.to_city+" — "+trip.to_address,
-      to_email: driver?.email||""
+      to_email: driverEmail
     });
     toast("Demande envoyée ! Le conducteur va confirmer 🙏");
     loadAll();
