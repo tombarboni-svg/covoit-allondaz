@@ -92,7 +92,12 @@ function createClient(url, key) {
     async signInWithPassword({ email, password }) {
       const r = await fetch(`${url}/auth/v1/token?grant_type=password`, { method: "POST", headers: baseH, body: JSON.stringify({ email, password }) });
       const d = await r.json();
-      if (d.access_token) { saveSession(d); listeners.forEach(fn => fn("SIGNED_IN", d)); }
+      if (d.access_token) {
+        // Enrichir avec user info
+        d.user = d.user || { id: d.user_id || parseJwt(d.access_token)?.sub };
+        saveSession(d);
+        listeners.forEach(fn => fn("SIGNED_IN", d));
+      }
       return { data: { session: d.access_token ? d : null }, error: d.error_description ? { message: d.error_description } : (d.msg ? { message: d.msg } : null) };
     },
     async signOut() {
@@ -172,6 +177,10 @@ function createClient(url, key) {
 }
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function parseJwt(token) {
+  try { return JSON.parse(atob(token.split('.')[1])); } catch(e) { return null; }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EMAILJS — envoie un email de notification au conducteur
@@ -260,9 +269,9 @@ input:focus,select:focus,textarea:focus{border-color:#4A7C59!important;box-shado
 // APP ROOT
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => sb.auth.getSession().data.session);
   const [profile, setProfile] = useState(null);
-  const [ready, setReady]     = useState(false);
+  const [ready, setReady]     = useState(true);
   const [authView, setAuthView] = useState("login");
   const [notif, setNotif]     = useState(null);
 
@@ -270,19 +279,24 @@ export default function App() {
     setNotif({msg,type}); setTimeout(()=>setNotif(null),3500);
   }, []);
 
+  const handleLogin = useCallback((s) => {
+    setSession(s);
+  }, []);
+
   useEffect(() => {
-    const {data:{session:s}} = sb.auth.getSession();
-    setSession(s); setReady(true);
-    const {data:{subscription}} = sb.auth.onAuthStateChange((ev,s) => {
-      setSession(s); if(ev==="SIGNED_OUT") setProfile(null);
+    const {data:{subscription}} = sb.auth.onAuthStateChange((ev, s) => {
+      if (ev === "SIGNED_IN" && s) setSession(s);
+      if (ev === "SIGNED_OUT") { setSession(null); setProfile(null); }
     });
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    sb.from("profiles").select("*").eq("id", session.user.id).then(({data}) => { if(data?.[0]) setProfile(data[0]); });
-  }, [session]);
+    sb.from("profiles").select("*").eq("id", session.user.id).then(({data}) => {
+      if (data?.[0]) setProfile(data[0]);
+    });
+  }, [session?.user?.id]);
 
   if (!ready) return <Spinner full />;
 
@@ -291,7 +305,7 @@ export default function App() {
       <style>{CSS}</style>
       {notif && <Toast notif={notif} />}
       {!session
-        ? <AuthScreen view={authView} setView={setAuthView} toast={toast} onLogin={setSession} onProfileCreated={setProfile} />
+        ? <AuthScreen view={authView} setView={setAuthView} toast={toast} onLogin={handleLogin} onProfileCreated={setProfile} />
         : <MainApp session={session} profile={profile} setProfile={setProfile} toast={toast} />
       }
     </div>
