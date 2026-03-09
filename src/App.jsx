@@ -6,8 +6,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const EJS_SERVICE  = "service_b444tkh";
-const EJS_TPL_RESA = "template_gvqhcmh";
-const EJS_TPL_ANNUL= "template_rzsvhjw";
+const EJS_TPL_RESA = "template_dswzd08";
+const EJS_TPL_ANNUL= "template_yuhd9ks";
 const EJS_PUBKEY   = "f4atCcjmZiZdCiS3H";
 
 async function sendEmail(templateId, params) {
