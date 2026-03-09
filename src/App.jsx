@@ -95,7 +95,7 @@ function MainApp({session,profile,setProfile,toast}){
     if(myIds.length>0){const{data:mbData}=await sb.from("bookings").select("*, profiles(full_name,phone,avatar_url,id,email)").in("trip_id",myIds);setMyTripBookings(mbData||[]);}
     else setMyTripBookings([]);
     // Charger les demandes de trajet
-    const{data:rqData}=await sb.from("ride_requests").select("*").gte("request_date",TODAY).eq("status","open").order("request_date",{ascending:true});
+    const{data:rqData}=await sb.from("ride_requests").select("*").gte("request_date",TODAY).order("request_date",{ascending:true});
     const rqList=rqData||[];setRequests(rqList);
     const ruids=[...new Set(rqList.map(r=>r.user_id))];const rmap={};
     for(const uid of ruids){const{data:pd}=await sb.from("profiles").select("*").eq("id",uid).single();if(pd)rmap[uid]=pd;}
@@ -192,13 +192,41 @@ function MainApp({session,profile,setProfile,toast}){
         to_email: requester.email
       });
     }
+    // Email de résumé au conducteur
+    const{data:conducteurProfile}=await sb.from("profiles").select("email").eq("id",session.user.id).single();
+    if(conducteurProfile?.email){
+      await sendEmail(EJS_TPL_RESA,{
+        conducteur_nom: profile?.full_name||"Conducteur",
+        conducteur_email: conducteurProfile.email,
+        passager_nom: requester?.full_name||"Un voisin",
+        date: fmtDate(req.request_date),
+        heure: fmtTime(req.request_time),
+        depart: req.from_place,
+        destination: req.to_city+" — "+req.to_address,
+        to_email: conducteurProfile.email
+      });
+    }
     toast("Demande acceptée ! Le voisin a été prévenu 🚗");
     loadAll();
   };
 
   const handleDeleteRequest=async(id)=>{
+    // Récupérer la demande avant suppression pour notifier le conducteur si acceptée
+    const req=requests.find(r=>r.id===id);
     await sb.from("ride_requests").delete().eq("id",id);
     setRequests(p=>p.filter(r=>r.id!==id));
+    // Si la demande avait été acceptée, prévenir le conducteur
+    if(req?.accepted_by){
+      const{data:driverProfile}=await sb.from("profiles").select("email,full_name").eq("id",req.accepted_by).single();
+      if(driverProfile?.email){
+        await sendEmail(EJS_TPL_ANNUL,{
+          passager_nom: driverProfile.full_name||"Conducteur",
+          passager_email: driverProfile.email,
+          message: `Le trajet que vous aviez accepté a été annulé par le demandeur. Trajet : ${fmtDate(req.request_date)} à ${fmtTime(req.request_time)} — ${req.from_place} → ${req.to_city}.`,
+          to_email: driverProfile.email
+        });
+      }
+    }
     toast("Demande supprimée.","warn");
   };
 
@@ -506,8 +534,8 @@ function RequestsTab({session,profile,requests,requestsProfiles,onAccept,onDelet
     onReload();
   };
 
-  const myRequests=requests.filter(r=>r.user_id===session.user.id);
-  const otherRequests=requests.filter(r=>r.user_id!==session.user.id);
+  const myRequests=requests.filter(r=>r.user_id===session.user.id&&r.status==="open");
+  const otherRequests=requests.filter(r=>r.user_id!==session.user.id&&r.status==="open");
 
   return(
     <div className="fade">
